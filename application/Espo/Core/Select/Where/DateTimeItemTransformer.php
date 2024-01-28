@@ -33,7 +33,9 @@ use Espo\Core\Exceptions\BadRequest;
 use Espo\Core\Utils\DateTime as DateTimeUtil;
 use Espo\Core\Utils\Config;
 use Espo\Core\Select\Where\Item\Type;
+use Espo\Core\Select\Helpers\UserPreferencesProvider;
 use Espo\Entities\User;
+use Espo\Entities\Preferences;
 
 use DateTime;
 use DateTimeZone;
@@ -46,8 +48,11 @@ use RuntimeException;
  */
 class DateTimeItemTransformer
 {
-    public function __construct(protected User $user, private Config $config)
-    {}
+    public function __construct(
+      protected User $user,
+      private Config $config,
+      private UserPreferencesProvider $userPreferencesProvider,
+    ) {}
 
     /**
      * @throws BadRequest
@@ -319,6 +324,41 @@ class DateTimeItemTransformer
                 $to = $dt->format($format);
 
                 $where['value'] = [$from, $to];
+
+                break;
+
+            case Type::CURRENT_WEEK:
+            case Type::LAST_WEEK:
+            case Type::LAST_X_WEEKS:
+            case Type::NEXT_WEEK:
+            case Type::NEXT_X_WEEKS:
+                $weekStart = $this->userPreferencesProvider->get("weekStart");
+                if ($weekStart === -1 || $weekStart == "")
+                    $weekStart = $this->config->get("weekStart");
+
+                $dtFrom = $dt->setTime(0,0);
+                $dtFrom->setISODate(intval($dtFrom->format("Y")), intval($dtFrom->format("W")), $weekStart)
+                    ->setTimezone(new DateTimeZone('UTC'));
+                $dtTo = (clone $dtFrom)->modify("+1 week -1 second");
+
+                if ($type == Type::LAST_WEEK) {
+                    $dtFrom->modify("-1 week");
+                    $dtTo->modify("-1 week");
+                } else if ($type == Type::LAST_X_WEEKS) {
+                    $number = strval(intval($value));
+                    $dtFrom->modify("-{$number} week");
+                    $dtTo->modify("-1 week");
+                } else if ($type == Type::NEXT_WEEK) {
+                    $dtFrom->modify("+1 week");
+                    $dtTo->modify("+1 week");
+                } else if ($type == Type::NEXT_X_WEEKS) {
+                    $number = strval(intval($value));
+                    $dtFrom->modify("+1 week");
+                    $dtTo->modify("+{$number} weeks");
+                }
+
+                $where['type'] = Type::BETWEEN;
+                $where['value'] = [$dtFrom->format($format), $dtTo->format($format)];
 
                 break;
 
